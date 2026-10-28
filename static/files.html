@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remote Directory Browser</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>Remote Directory Browser</h1>
+            <button id="logoutBtn" class="btn btn-secondary">Logout</button>
+        </header>
+
+        <main class="main-content">
+            <!-- Breadcrumb Navigation -->
+            <nav class="breadcrumb" id="breadcrumb">
+                <a href="/files" class="breadcrumb-link">Home</a>
+            </nav>
+
+            <!-- Filter and Sort Controls -->
+            <div class="controls">
+                <div class="filter-group">
+                    <label for="filterInput">Filter:</label>
+                    <input 
+                        type="text" 
+                        id="filterInput" 
+                        class="filter-input" 
+                        placeholder="Search files..."
+                    >
+                </div>
+                <div class="sort-group">
+                    <label for="sortSelect">Sort by:</label>
+                    <select id="sortSelect" class="sort-select">
+                        <option value="name-asc">Name (A-Z)</option>
+                        <option value="name-desc">Name (Z-A)</option>
+                        <option value="type">Type</option>
+                        <option value="size-asc">Size (Small-Large)</option>
+                        <option value="size-desc">Size (Large-Small)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Directory Table -->
+            <div class="table-container">
+                <table class="dir-table">
+                    <thead>
+                        <tr>
+                            <th class="col-name">Name</th>
+                            <th class="col-type">Type</th>
+                            <th class="col-size">Size</th>
+                            <th class="col-modified">Modified</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dirTableBody">
+                        <tr>
+                            <td colspan="4" class="loading">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Error Messages -->
+            <div id="errorMessage" class="error-message" style="display: none;"></div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+    <script>
+        let allEntries = [];
+        let currentPath = '/';
+
+        // Parse path from URL
+        function getCurrentPath() {
+            const pathMatch = window.location.pathname.match(/^\/files(.*)/);
+            return pathMatch ? (pathMatch[1] || '/') : '/';
+        }
+
+        // Format file size to human-readable format
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '-';
+            const units = ['B', 'KB', 'MB', 'GB'];
+            let size = bytes;
+            let unitIndex = 0;
+            while (size >= 1024 && unitIndex < units.length - 1) {
+                size /= 1024;
+                unitIndex++;
+            }
+            return size.toFixed(1) + ' ' + units[unitIndex];
+        }
+
+        // Format date
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        }
+
+        // Build breadcrumb from path
+        function buildBreadcrumb(path) {
+            const token = getAuthToken();
+            const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : '';
+            const parts = path.split('/').filter(p => p);
+            const breadcrumb = document.getElementById('breadcrumb');
+            breadcrumb.innerHTML = `<a href="/files${tokenQuery}" class="breadcrumb-link">Home</a>`;
+            
+            let currentBreadcrumbPath = '';
+            for (const part of parts) {
+                currentBreadcrumbPath += '/' + part;
+                const link = document.createElement('a');
+                link.href = '/files' + currentBreadcrumbPath + tokenQuery;
+                link.className = 'breadcrumb-link';
+                link.textContent = part;
+                
+                const separator = document.createElement('span');
+                separator.className = 'breadcrumb-separator';
+                separator.textContent = '/';
+                
+                breadcrumb.appendChild(separator);
+                breadcrumb.appendChild(link);
+            }
+        }
+
+        // Load directory contents
+        async function loadDirectory() {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.style.display = 'none';
+            
+            try {
+                const path = getCurrentPath();
+                const token = getAuthToken();
+                const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+                const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+
+                const response = await fetch(`/api/list?path=${encodeURIComponent(path)}${tokenParam}`, {
+                    credentials: 'same-origin',
+                    headers
+                });
+                
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        clearAuthToken();
+                        window.location.href = '/login';
+                        return;
+                    }
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                allEntries = data.contents || [];
+                currentPath = path;
+                
+                buildBreadcrumb(path);
+                updateTable();
+                
+                // Update URL query params for state preservation
+                updateURLState();
+            } catch (error) {
+                errorDiv.textContent = 'Failed to load directory: ' + error.message;
+                errorDiv.style.display = 'block';
+                console.error('Load directory error:', error);
+            }
+        }
+
+        // Update table with filtered and sorted entries
+        function updateTable() {
+            const filterValue = document.getElementById('filterInput').value.toLowerCase();
+            const sortValue = document.getElementById('sortSelect').value;
+            const token = getAuthToken();
+            const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : '';
+            
+            let filtered = allEntries.filter(entry => 
+                entry.name.toLowerCase().includes(filterValue)
+            );
+            
+            // Sort entries
+            filtered.sort((a, b) => {
+                switch(sortValue) {
+                    case 'name-asc':
+                        return a.name.localeCompare(b.name);
+                    case 'name-desc':
+                        return b.name.localeCompare(a.name);
+                    case 'type':
+                        if (a.type !== b.type) {
+                            return a.type === 'dir' ? -1 : 1;
+                        }
+                        return a.name.localeCompare(b.name);
+                    case 'size-asc':
+                        return a.size - b.size;
+                    case 'size-desc':
+                        return b.size - a.size;
+                    default:
+                        return 0;
+                }
+            });
+            
+            // Render table
+            const tbody = document.getElementById('dirTableBody');
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="empty">No files found</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = filtered.map(entry => {
+                const icon = entry.type === 'dir' ? '📁' : '📄';
+                const subPath = currentPath.endsWith('/') ? currentPath : currentPath + '/';
+                const nameCell = entry.type === 'dir' 
+                    ? `<a href="/files${subPath}${encodeURIComponent(entry.name)}${tokenQuery}" class="dir-link">${icon} ${escapeHtml(entry.name)}</a>`
+                    : `<span class="file-name">${icon} ${escapeHtml(entry.name)}</span>`;
+                
+                return `
+                    <tr class="entry-row">
+                        <td class="col-name">${nameCell}</td>
+                        <td class="col-type">${entry.type}</td>
+                        <td class="col-size">${formatFileSize(entry.size)}</td>
+                        <td class="col-modified">${formatDate(entry.modified)}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // Update URL query parameters to preserve state
+        function updateURLState() {
+            const filterValue = document.getElementById('filterInput').value;
+            const sortValue = document.getElementById('sortSelect').value;
+            const token = getAuthToken();
+            
+            const params = new URLSearchParams(window.location.search);
+            if (token) params.set('token', token);
+            if (filterValue) params.set('filter', filterValue); else params.delete('filter');
+            if (sortValue && sortValue !== 'name-asc') params.set('sort', sortValue); else params.delete('sort');
+            
+            const queryString = params.toString();
+            const newURL = window.location.pathname + (queryString ? '?' + queryString : '');
+            window.history.replaceState({}, '', newURL);
+        }
+
+        // Event listeners
+        document.getElementById('filterInput').addEventListener('input', () => {
+            updateTable();
+            updateURLState();
+        });
+
+        document.getElementById('sortSelect').addEventListener('change', () => {
+            updateTable();
+            updateURLState();
+        });
+
+        document.getElementById('logoutBtn').addEventListener('click', async () => {
+            try {
+                const token = getAuthToken();
+                const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+                await fetch('/api/logout', { 
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers
+                });
+            } catch (error) {
+                console.error('Logout error:', error);
+            } finally {
+                clearAuthToken();
+                window.location.href = '/login';
+            }
+        });
+
+        // Restore state from URL on page load
+        function restoreState() {
+            const params = new URLSearchParams(window.location.search);
+            const token = params.get('token') || params.get('session');
+            if (token) {
+                setAuthToken(token);
+            }
+
+            const filter = params.get('filter');
+            const sort = params.get('sort');
+            
+            if (filter) {
+                document.getElementById('filterInput').value = filter;
+            }
+            if (sort) {
+                document.getElementById('sortSelect').value = sort;
+            }
+        }
+
+        // Initial load
+        restoreState();
+        loadDirectory();
+    </script>
+</body>
+</html>

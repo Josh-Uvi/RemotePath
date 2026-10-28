@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan to resolve the iframe third-party cookie blocking issue by adding dual-mode token authentication (localStorage / Authorization header and query token fallback) alongside HTTP cookies.",
+  "updatedAt":  "2026-10-27T23:55:23.359797213Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

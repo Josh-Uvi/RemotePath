@@ -1,0 +1,9 @@
+{
+  "name": "Remote Directory Browser",
+  "description": "Secure remote directory browser with session authentication, breadcrumb navigation, and file sorting.",
+  "prompt": "Remote Directory Browser",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
